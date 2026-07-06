@@ -1,0 +1,391 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>燕雲序號分享</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+    <div class="app-container">
+        <aside class="sidebar">
+            <div class="brand-title">🎮 燕雲序號</div>
+            <div style="display: flex; gap: 8px;">
+                <select id="yearSelect" class="year-select">
+                    <option value="2026">2026 年</option>
+                    <option value="2027">2027 年</option>
+                </select>
+                <select id="mobileMonthSelect" class="mobile-month-select"></select>
+            </div>
+            
+            <div id="monthList" class="month-list"></div>
+            <hr class="sidebar-divider">
+            <button id="btnStashSidebar" class="month-btn stash-btn">📥 暫存區</button>
+        </aside>
+
+        <main class="main-content">
+            <header>
+                <div class="title-area">
+                    <h2 id="currentMonthTitle" class="current-month-title">載入中...</h2>
+                    <span id="progressText" class="progress-text"></span>
+                </div>
+                <div class="nav-links">
+                    <button id="navBtnList" class="nav-btn active">序號列表</button>
+                    <button id="navBtnAdd" class="nav-btn">智慧過濾器</button>
+                </div>
+            </header>
+
+            <div id="viewList" class="view-section active">
+                <div class="list-controls">
+                    <label class="toggle-label">
+                        隱藏已兌換
+                        <input type="checkbox" id="toggleHideCopied" class="toggle-switch">
+                    </label>
+                </div>
+                <div id="keyList" class="key-list"></div>
+            </div>
+
+            <div id="viewAdd" class="view-section">
+                <div class="add-container">
+                    <p class="hint-text">請貼上大量序號，系統會自動找出「全新」的，並安全地放入 <strong>📥 暫存區</strong>。</p>
+                    <textarea id="rawInput" placeholder="請在此貼上大量序號..."></textarea>
+                    
+                    <div class="action-row">
+                        <button id="btnProcess" class="btn-large btn-process">✨ 自動找新序號</button>
+                    </div>
+
+                    <div id="processResult">
+                        <p id="resultMsg" class="status-msg"></p>
+                        <textarea id="cleanOutput" rows="3" readonly placeholder="過濾好的新序號會在這裡..."></textarea>
+                        <div class="action-row" style="justify-content: flex-end;">
+                            <button id="btnExportTxt" class="btn-large btn-export">📄 匯出 TXT</button>
+                            <button id="btnCopyDC" class="btn-large btn-dc">💬 複製給 DC</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </main>
+        
+        <nav class="bottom-nav">
+            <button id="bNavList" class="b-nav-item active"><span>📜</span>列表</button>
+            <button id="bNavAdd" class="b-nav-item"><span>✨</span>過濾</button>
+            <button id="bNavStash" class="b-nav-item"><span>📥</span>暫存</button>
+        </nav>
+
+        <div id="toast" class="toast-container">✅ 已複製到剪貼簿</div>
+    </div>
+
+    <script>
+        document.addEventListener("DOMContentLoaded", async () => {
+            const now = new Date();
+            const systemYear = now.getFullYear();      
+            const systemMonth = now.getMonth() + 1;    
+            
+            let selectedYear = systemYear.toString();
+            let selectedMonth = systemMonth.toString();
+            let currentView = 'list'; // 'list' 或 'add'
+
+            let keysDB = {}; 
+            let userStashKeys = []; 
+            const usedKeys = JSON.parse(localStorage.getItem('myUsedKeys') || '[]');
+            const rawGistUrl = "https://gist.githubusercontent.com/AngKuKueh/744a869a1fc16f2f3ce1430549cd5bee/raw/gistfile1.txt"; 
+
+            // DOM 元素
+            const keyList = document.getElementById("keyList");
+            const monthList = document.getElementById("monthList");
+            const mobileMonthSelect = document.getElementById("mobileMonthSelect");
+            const btnStashSidebar = document.getElementById("btnStashSidebar");
+            const currentMonthTitle = document.getElementById("currentMonthTitle");
+            const progressText = document.getElementById("progressText");
+            const toggleHideCopied = document.getElementById("toggleHideCopied");
+            const toast = document.getElementById("toast");
+
+            // 輕提示功能
+            function showToast(msg, icon = "✅") {
+                toast.innerHTML = `${icon} ${msg}`;
+                toast.classList.add("show");
+                setTimeout(() => toast.classList.remove("show"), 2000);
+            }
+
+            // 開關隱藏功能
+            toggleHideCopied.addEventListener("change", (e) => {
+                if (e.target.checked) keyList.classList.add("hide-copied-mode");
+                else keyList.classList.remove("hide-copied-mode");
+            });
+
+            // 抓取資料 (加入強制無快取機制！)
+            try {
+                const timestamp = new Date().getTime();
+                const response = await fetch(`${rawGistUrl}?t=${timestamp}`, { cache: "no-store" });
+                if (!response.ok) throw new Error("讀取失敗");
+                const data = await response.text();
+                parseGistData(data);
+            } catch (e) {
+                console.error(e);
+                keyList.innerHTML = `<p style="color:red; grid-column: 1/-1;">讀取資料失敗，請確認網路連線。</p>`;
+            }
+
+            function parseGistData(text) {
+                const lines = text.split('\n');
+                let parseTarget = `${systemYear}-${systemMonth}`; 
+                
+                if(!keysDB[parseTarget]) keysDB[parseTarget] = [];
+                lines.forEach(line => {
+                    let trimLine = line.trim();
+                    if (trimLine === "") return;
+                    const tagMatch = trimLine.match(/^\[?(\d{4})-(\d{1,2})\]?/);
+                    if (tagMatch) {
+                        parseTarget = `${tagMatch[1]}-${parseInt(tagMatch[2])}`;
+                        if(!keysDB[parseTarget]) keysDB[parseTarget] = [];
+                        return; 
+                    }
+                    keysDB[parseTarget].push(trimLine);
+                });
+                initUI();
+            }
+
+            function initUI() {
+                document.getElementById("yearSelect").value = selectedYear;
+                renderSidebar();
+                updateMainView();
+                
+                document.getElementById("yearSelect").addEventListener("change", (e) => {
+                    selectedYear = e.target.value;
+                    selectedMonth = selectedYear === "2026" ? systemMonth.toString() : "1";
+                    renderSidebar(); updateMainView();
+                });
+
+                mobileMonthSelect.addEventListener("change", (e) => {
+                    selectedMonth = e.target.value;
+                    renderSidebar(); updateMainView(); switchTab('list');
+                });
+            }
+
+            function renderSidebar() {
+                monthList.innerHTML = "";
+                mobileMonthSelect.innerHTML = "";
+                
+                for (let m = 1; m <= 12; m++) {
+                    if (selectedYear === "2026" && m < 6) continue;
+
+                    const btn = document.createElement("button");
+                    btn.className = "month-btn";
+                    btn.textContent = `${m} 月份`;
+                    if (m.toString() === selectedMonth) btn.classList.add("active");
+                    btn.addEventListener("click", () => {
+                        selectedMonth = m.toString();
+                        renderSidebar(); updateMainView(); switchTab('list');
+                    });
+                    monthList.appendChild(btn);
+
+                    const opt = document.createElement("option");
+                    opt.value = m.toString();
+                    opt.textContent = `${m} 月份`;
+                    if (m.toString() === selectedMonth) opt.selected = true;
+                    mobileMonthSelect.appendChild(opt);
+                }
+                
+                btnStashSidebar.classList.toggle("active", selectedMonth === 'stash');
+                
+                // 讓手機底部的「暫存區」按鈕跟著連動發亮
+                document.getElementById("bNavStash").classList.toggle("active", selectedMonth === 'stash' && currentView === 'list');
+            }
+
+            btnStashSidebar.addEventListener("click", () => {
+                selectedMonth = 'stash';
+                renderSidebar(); updateMainView(); switchTab('list');
+            });
+
+            function updateMainView() {
+                keyList.innerHTML = "";
+                progressText.textContent = "";
+                
+                let currentKeys = [];
+                let isStash = (selectedMonth === 'stash');
+
+                if (isStash) {
+                    currentMonthTitle.innerHTML = `📥 暫存區 <span>(${userStashKeys.length})</span>`;
+                    currentKeys = userStashKeys;
+                } else {
+                    const targetKey = `${selectedYear}-${selectedMonth}`;
+                    currentKeys = keysDB[targetKey] || [];
+                    currentMonthTitle.innerHTML = `📌 本月收集 <span>${currentKeys.length}</span> 個`;
+                }
+
+                if (currentKeys.length === 0) {
+                    if (isStash) {
+                        keyList.innerHTML = `
+                            <div class="full-width-msg">
+                                <h3 style="color: var(--text-main); margin: 0 0 10px 0; font-size: 20px;">這裡目前空空的！</h3>
+                                <p style="color: var(--text-muted); font-size: 14px; margin-bottom: 25px;">找出新序號後會保存在這裡。</p>
+                                <button class="btn-large btn-process" onclick="document.getElementById('bNavAdd').click()">前往智慧過濾 ✨</button>
+                            </div>`;
+                    } else {
+                        keyList.innerHTML = `<p style="color:var(--text-muted); grid-column: 1/-1;">這個月還沒有序號喔。</p>`;
+                    }
+                    return;
+                }
+
+                // 計算進度
+                let localUsedCount = 0;
+                currentKeys.forEach(key => {
+                    if(usedKeys.includes(key)) localUsedCount++;
+                    addKeyToDOM(key, isStash);
+                });
+                
+                progressText.textContent = `進度：已兌換 ${localUsedCount} / ${currentKeys.length}`;
+
+                // 暫存區特殊底部按鈕
+                if (isStash) {
+                    const stashActions = document.createElement("div");
+                    stashActions.className = "full-width-actions";
+                    stashActions.innerHTML = `
+                        <button id="btnClearStash" class="btn-large btn-danger">🧹 清空暫存</button>
+                        <button id="btnCopyStash" class="btn-large btn-dc">💬 複製給 DC</button>
+                    `;
+                    keyList.appendChild(stashActions);
+
+                    document.getElementById("btnCopyStash").addEventListener("click", () => {
+                        copyDataDC(userStashKeys);
+                        // 防呆：詢問是否清空
+                        setTimeout(() => {
+                            if(confirm("已經複製好囉！需要幫您清空暫存區，準備迎接下一批序號嗎？")) {
+                                userStashKeys = [];
+                                updateMainView();
+                                showToast("暫存區已清空", "🧹");
+                            }
+                        }, 500);
+                    });
+                    
+                    document.getElementById("btnClearStash").addEventListener("click", () => {
+                        if(confirm("確定要清空暫存區嗎？此操作無法復原喔。")) {
+                            userStashKeys = [];
+                            updateMainView();
+                            showToast("暫存區已清空", "🧹");
+                        }
+                    });
+                }
+            }
+
+            function addKeyToDOM(keyText, isNewTemp = false) {
+                const keyItem = document.createElement("div");
+                keyItem.className = "key-item";
+                
+                const isUsed = usedKeys.includes(keyText);
+                if(isUsed) keyItem.classList.add("is-copied"); // 搭配隱藏開關使用
+
+                const wrapper = document.createElement("div");
+                wrapper.className = "key-input-wrapper";
+                if (isNewTemp) {
+                    wrapper.innerHTML = `<span class="tag-new">NEW</span>`;
+                    keyItem.style.borderColor = "rgba(251, 191, 36, 0.5)"; 
+                }
+
+                const keyDisplay = document.createElement("input");
+                keyDisplay.type = "text"; keyDisplay.value = keyText; keyDisplay.readOnly = true;
+                if(isUsed) {
+                    keyDisplay.style.textDecoration = "line-through";
+                    keyDisplay.style.color = "var(--text-muted)";
+                }
+                wrapper.appendChild(keyDisplay);
+
+                const copyBtn = document.createElement("button");
+                copyBtn.className = "copy-btn" + (isUsed ? " success" : "");
+                copyBtn.textContent = isUsed ? "已複製" : "複製";
+                
+                copyBtn.addEventListener("click", () => {
+                    navigator.clipboard.writeText(keyText).then(() => {
+                        showToast("已複製序號");
+                        copyBtn.textContent = "已複製"; copyBtn.classList.add("success");
+                        keyDisplay.style.textDecoration = "line-through"; keyDisplay.style.color = "var(--text-muted)";
+                        keyItem.classList.add("is-copied");
+                        
+                        if (!usedKeys.includes(keyText)) {
+                            usedKeys.push(keyText);
+                            localStorage.setItem('myUsedKeys', JSON.stringify(usedKeys));
+                            updateMainView(); // 更新進度條
+                        }
+                    });
+                });
+
+                keyItem.appendChild(wrapper); keyItem.appendChild(copyBtn); keyList.appendChild(keyItem);
+            }
+
+            // 導航切換綁定 (電腦版與手機版)
+            document.getElementById("navBtnList").addEventListener("click", () => switchTab('list'));
+            document.getElementById("navBtnAdd").addEventListener("click", () => switchTab('add'));
+            
+            document.getElementById("bNavList").addEventListener("click", () => {
+                if (selectedMonth === 'stash') selectedMonth = (systemMonth).toString(); // 如果原本在暫存區，切回當前月
+                switchTab('list'); renderSidebar(); updateMainView();
+            });
+            document.getElementById("bNavAdd").addEventListener("click", () => switchTab('add'));
+            document.getElementById("bNavStash").addEventListener("click", () => {
+                selectedMonth = 'stash'; switchTab('list'); renderSidebar(); updateMainView();
+            });
+
+            function switchTab(tab) {
+                currentView = tab;
+                document.getElementById("navBtnList").classList.toggle('active', tab === 'list');
+                document.getElementById("navBtnAdd").classList.toggle('active', tab === 'add');
+                document.getElementById("viewList").classList.toggle('active', tab === 'list');
+                document.getElementById("viewAdd").classList.toggle('active', tab === 'add');
+                
+                // 手機版底部燈號
+                document.getElementById("bNavList").classList.toggle('active', tab === 'list' && selectedMonth !== 'stash');
+                document.getElementById("bNavAdd").classList.toggle('active', tab === 'add');
+                document.getElementById("bNavStash").classList.toggle('active', tab === 'list' && selectedMonth === 'stash');
+            }
+
+            // 智慧過濾邏輯
+            document.getElementById("btnProcess").addEventListener("click", () => {
+                const rawText = document.getElementById("rawInput").value;
+                if (!rawText.trim()) return showToast("請先貼上序號喔！", "⚠️");
+
+                const potentialKeys = rawText.split(/[\s,，、；;]+/).map(k => k.trim()).filter(k => k.length > 5);
+                const uniqueInputKeys = [...new Set(potentialKeys)];
+                const allKnownKeys = [...Object.values(keysDB).flat(), ...userStashKeys];
+                const newlyProcessedKeys = uniqueInputKeys.filter(k => !allKnownKeys.includes(k));
+
+                document.getElementById("processResult").style.display = "flex";
+                
+                if (newlyProcessedKeys.length > 0) {
+                    document.getElementById("resultMsg").style.color = "var(--success-color)";
+                    document.getElementById("resultMsg").innerHTML = `🎉 找到 ${newlyProcessedKeys.length} 個新序號！`;
+                    document.getElementById("cleanOutput").value = newlyProcessedKeys.join('\n');
+                    
+                    newlyProcessedKeys.forEach(key => userStashKeys.unshift(key));
+                    
+                    document.getElementById("btnCopyDC").onclick = () => {
+                        copyDataDC(newlyProcessedKeys);
+                        document.getElementById("rawInput").value = ""; // 複製後清空輸入框
+                        document.getElementById("cleanOutput").value = "";
+                        document.getElementById("processResult").style.display = "none";
+                        showToast("已順便幫您清空輸入框", "🧹");
+                    };
+                    document.getElementById("btnExportTxt").onclick = () => exportData(newlyProcessedKeys, "新過濾序號");
+                } else {
+                    document.getElementById("resultMsg").style.color = "#fbbf24";
+                    document.getElementById("resultMsg").innerHTML = `⚠️ 這些序號資料庫都已經有囉。`;
+                    document.getElementById("cleanOutput").value = "";
+                }
+            });
+
+            function copyDataDC(dataArray) {
+                if(dataArray.length === 0) return showToast("沒有序號可以複製喔", "⚠️");
+                navigator.clipboard.writeText(`哈囉！這裡有剛整理好的新序號：\n\n${dataArray.join('\n')}`)
+                    .then(() => showToast("✅ 已經複製好囉！"));
+            }
+
+            function exportData(dataArray, fileNamePrefix) {
+                if(dataArray.length === 0) return showToast("沒有序號可以匯出喔", "⚠️");
+                const a = document.createElement('a');
+                a.href = URL.createObjectURL(new Blob([dataArray.join('\n')]));
+                a.download = `${fileNamePrefix}_${new Date().toISOString().slice(0,10)}.txt`;
+                a.click();
+            }
+        });
+    </script>
+</body>
+</html>
